@@ -16,12 +16,13 @@ public:
 
 	std::string getLastDecoded() const;
 	bool hasDecoded() const;
+	bool isCameraAvailable() const;
 
 private:
-	QrDecoder decoder ; // Scanner owns its QrDecoder - composition
+	QrDecoder decoder; // Scanner owns its QrDecoder - composition
 	ofVideoGrabber camera;
 	ofImage loadedImage;
 	ScanMode mode = ScanMode::CAMERA;
 	std::string lastDecoded;
+	bool cameraAvailable = false;
 };
-

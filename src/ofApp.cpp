@@ -1,5 +1,7 @@
 #include "ofApp.h"
 #include "ApiKeyLoader.h"
+#include <algorithm>
+#include <cctype>
 #include <cstdlib>
 
 namespace {
@@ -33,11 +35,32 @@ std::string ofApp::truncateToFit(const std::string & text, float maxWidth) const
 	return text.substr(0, maxChars - 3) + "...";
 }
 
+bool ofApp::looksLikeUrl(const std::string & text) const {
+	// Deliberately conservative: only treat clearly URL-shaped text as
+	// checkable. Anything else (plain text, phone numbers, vCards, Wi-Fi
+	// configs, etc.) skips the safety check entirely, rather than sending
+	// non-URL data to the Safe Browsing API and showing a verdict that
+	// implies it was actually checked as a link.
+	std::string lower = text;
+	std::transform(lower.begin(), lower.end(), lower.begin(),
+		[](unsigned char c) { return std::tolower(c); });
+	return lower.rfind("http://", 0) == 0 || lower.rfind("https://", 0) == 0;
+}
+
+void ofApp::showError(const std::string & message) {
+	errorPopupMessage = message;
+	showErrorPopup = true;
+}
+
 void ofApp::setup() {
 	ofSetWindowTitle("QR Safety Scanner");
 	ofBackground(245);
 
 	scanner.setup(640, 480);
+
+	if (!scanner.isCameraAvailable()) {
+		showError("No camera detected. Use File mode instead.");
+	}
 
 	toggleButtons = {
 		{ "Camera", ofRectangle(300, 15, 70, 26), true },
@@ -57,11 +80,19 @@ void ofApp::update() {
 		std::string current = scanner.getLastDecoded();
 		if (current != lastSeenDecodedUrl) {
 			// A newly-decoded code invalidates any previous verdict - back
-			// to PENDING until the user explicitly checks this one.
+			// to PENDING (or NOT_A_LINK) until the user explicitly checks
+			// this one.
 			lastSeenDecodedUrl = current;
-			bannerState = BannerState::PENDING;
+			bannerState = looksLikeUrl(current) ? BannerState::PENDING : BannerState::NOT_A_LINK;
 			showConfirmDialog = false;
 		}
+	} else if (bannerState != BannerState::EMPTY) {
+		// Scanner currently has nothing decoded (e.g. a freshly-loaded file
+		// had no QR code in it) - don't keep showing a stale verdict from
+		// whatever was decoded before.
+		bannerState = BannerState::EMPTY;
+		lastSeenDecodedUrl.clear();
+		showConfirmDialog = false;
 	}
 }
 
@@ -72,6 +103,9 @@ void ofApp::draw() {
 
 	if (showConfirmDialog) {
 		drawConfirmDialog();
+	}
+	if (showErrorPopup) {
+		drawErrorPopup();
 	}
 }
 
@@ -119,9 +153,15 @@ void ofApp::drawPreview() {
 	ofDrawLine(bx + bw, by + bh, bx + bw - corner, by + bh);
 	ofDrawLine(bx + bw, by + bh, bx + bw, by + bh - corner);
 
-	if (!scanner.hasDecoded()) {
+	if (isCameraMode && !scanner.isCameraAvailable()) {
+		ofSetColor(220, 140, 140);
+		ofDrawBitmapString("No camera detected - use File mode", previewX + 20, previewY + previewH / 2);
+	} else if (!scanner.hasDecoded()) {
 		ofSetColor(159, 225, 203);
-		ofDrawBitmapString("Point your camera at a QR code", previewX + 20, previewY + previewH - 15);
+		std::string hint = isCameraMode
+			? "Point your camera at a QR code"
+			: "No QR code found in this image";
+		ofDrawBitmapString(hint, previewX + 20, previewY + previewH - 15);
 	}
 }
 
@@ -162,6 +202,19 @@ void ofApp::drawResultBanner() {
 		ofDrawRectRounded(checkButtonBounds, 6);
 		ofSetColor(255);
 		ofDrawBitmapString("Check safety", checkButtonBounds.x + 10, checkButtonBounds.y + 19);
+		break;
+	}
+
+	case BannerState::NOT_A_LINK: {
+		ofSetColor(235, 235, 235);
+		ofDrawRectRounded(previewX, bannerY, previewW, bannerH, 8);
+		ofSetColor(90);
+		ofDrawBitmapString("Decoded text (not a link)", previewX + 15, bannerY + 22);
+		ofSetColor(120);
+		ofDrawBitmapString(truncateToFit(scanner.getLastDecoded(), previewW - 30), previewX + 15, bannerY + 42);
+		// No safety check offered - there's no URL to check against
+		// Safe Browsing, and offering one would imply this text was
+		// actually verified when it wasn't.
 		break;
 	}
 
@@ -246,6 +299,32 @@ void ofApp::drawConfirmDialog() {
 	ofDrawBitmapString("Open anyway", confirmOpenBounds.x + 12, confirmOpenBounds.y + 19);
 }
 
+void ofApp::drawErrorPopup() {
+	// Same dimmed-backdrop + centered box language as the confirm dialog,
+	// for visual consistency - just a single acknowledgement button.
+	ofSetColor(0, 0, 0, 150);
+	ofDrawRectangle(0, 0, ofGetWidth(), ofGetHeight());
+
+	float dialogW = 400, dialogH = 130;
+	float dialogX = (ofGetWidth() - dialogW) / 2;
+	float dialogY = (ofGetHeight() - dialogH) / 2;
+
+	ofSetColor(255);
+	ofDrawRectRounded(dialogX, dialogY, dialogW, dialogH, 10);
+
+	ofSetColor(30);
+	// Messages are kept short and specific at each call site so they fit on
+	// one line here, rather than adding wrap logic for what should be a
+	// brief, glanceable notice.
+	ofDrawBitmapString(errorPopupMessage, dialogX + 20, dialogY + 40);
+
+	errorPopupOkBounds = ofRectangle(dialogX + (dialogW - 100) / 2, dialogY + dialogH - 45, 100, 30);
+	ofSetColor(29, 158, 117);
+	ofDrawRectRounded(errorPopupOkBounds, 6);
+	ofSetColor(255);
+	ofDrawBitmapString("OK", errorPopupOkBounds.x + 40, errorPopupOkBounds.y + 19);
+}
+
 void ofApp::checkSafetyNow() {
 	LinkSafetyChecker checker(apiKey);
 	SafetyResult result = checker.check(scanner.getLastDecoded());
@@ -274,6 +353,13 @@ void ofApp::handleUrlClick() {
 }
 
 void ofApp::mousePressed(int x, int y, int button) {
+	if (showErrorPopup) {
+		if (errorPopupOkBounds.inside(x, y)) {
+			showErrorPopup = false;
+		}
+		return; // modal - ignore everything else while an error is showing
+	}
+
 	if (showConfirmDialog) {
 		if (confirmOpenBounds.inside(x, y)) {
 			openInBrowser(scanner.getLastDecoded());
@@ -287,14 +373,22 @@ void ofApp::mousePressed(int x, int y, int button) {
 	for (const auto & btn : toggleButtons) {
 		if (btn.bounds.inside(x, y)) {
 			if (btn.isCameraButton) {
-				isCameraMode = true;
-				scanner.setModeCamera();
+				if (scanner.isCameraAvailable()) {
+					isCameraMode = true;
+					scanner.setModeCamera();
+				} else {
+					showError("No camera detected. Use File mode instead.");
+				}
 			} else {
 				ofFileDialogResult result = ofSystemLoadDialog("Select a QR code image");
 				if (result.bSuccess) {
-					isCameraMode = false;
-					if (!scanner.loadImageFile(result.getPath())) {
-						ofLogError() << "Failed to load selected image";
+					if (scanner.loadImageFile(result.getPath())) {
+						isCameraMode = false;
+						if (!scanner.hasDecoded()) {
+							showError("No QR code found in that image.");
+						}
+					} else {
+						showError("Couldn't load that image. Try another file.");
 					}
 				}
 			}

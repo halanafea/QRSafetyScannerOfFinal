@@ -9,11 +9,12 @@ struct ToggleButton {
 	bool isCameraButton;
 };
 
-// Result-banner state. EMPTY/PENDING are scan-flow states; the other three
-// mirror SafetyResult 1:1 once a check has actually been run.
+// Result-banner state. EMPTY/PENDING/NOT_A_LINK are scan-flow states; the
+// other three mirror SafetyResult 1:1 once a check has actually been run.
 enum class BannerState {
 	EMPTY, // nothing decoded yet
-	PENDING, // decoded, safety check not run yet
+	PENDING, // decoded a URL, safety check not run yet
+	NOT_A_LINK, // decoded successfully, but it isn't a URL at all
 	SAFE,
 	UNSAFE,
 	COULD_NOT_VERIFY
@@ -42,9 +43,12 @@ private:
 	void drawPreview();
 	void drawResultBanner();
 	void drawConfirmDialog();
+	void drawErrorPopup();
 
 	void checkSafetyNow();
 	void handleUrlClick();
+	void showError(const std::string & message);
+	bool looksLikeUrl(const std::string & text) const;
 	std::string truncateToFit(const std::string & text, float maxWidth) const;
 
 	Scanner scanner;
@@ -64,4 +68,10 @@ private:
 	bool showConfirmDialog = false;
 	ofRectangle confirmCancelBounds;
 	ofRectangle confirmOpenBounds;
+
+	// Phase 7: generic modal error popup, used for both a missing/failed
+	// camera and a failed file load.
+	bool showErrorPopup = false;
+	std::string errorPopupMessage;
+	ofRectangle errorPopupOkBounds;
 };
