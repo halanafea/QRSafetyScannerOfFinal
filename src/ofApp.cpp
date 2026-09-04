@@ -1,12 +1,41 @@
 #include "ofApp.h"
 #include "ApiKeyLoader.h"
-#include "LinkSafetyChecker.h"
-#include <iostream>
+#include <cstdlib>
+
+namespace {
+// Cross-platform browser opener, per the locked GUI design (documentation
+// Section 12.3). Kept as a free function, not a Scanner/ofApp method,
+// since it has nothing to do with either class's responsibilities.
+void openInBrowser(const std::string & url) {
+#ifdef _WIN32
+	std::string command = "start " + url;
+#elif __APPLE__
+	std::string command = "open " + url;
+#endif
+	system(command.c_str());
+}
+}
+
+std::string ofApp::truncateToFit(const std::string & text, float maxWidth) const {
+	// ofDrawBitmapString uses a fixed-width bitmap font, ~8px per glyph.
+	// Long decoded URLs (test/malicious URLs especially) can easily run
+	// past the banner or dialog edge if drawn unclipped, so anything that
+	// won't fit gets cut with an ellipsis rather than overflowing.
+	const float charWidth = 8.0f;
+	size_t maxChars = static_cast<size_t>(maxWidth / charWidth);
+
+	if (text.size() <= maxChars) {
+		return text;
+	}
+	if (maxChars <= 3) {
+		return text.substr(0, maxChars);
+	}
+	return text.substr(0, maxChars - 3) + "...";
+}
 
 void ofApp::setup() {
 	ofSetWindowTitle("QR Safety Scanner");
 	ofBackground(245);
-	ofSetWindowShape(460, 480);
 
 	scanner.setup(640, 480);
 
@@ -15,32 +44,35 @@ void ofApp::setup() {
 		{ "File", ofRectangle(375, 15, 60, 26), false },
 	};
 
-	// Temporary test - remove once LinkSafetyChecker is confirmed working
-	std::string apiKey = ApiKeyLoader::load("apikey.txt");
-	LinkSafetyChecker checker(apiKey);
-
-	SafetyResult result = checker.check("http://example.com");
-	switch (result) {
-	case SafetyResult::SAFE:
-		std::cout << "Result: SAFE" << std::endl;
-		break;
-	case SafetyResult::UNSAFE:
-		std::cout << "Result: UNSAFE" << std::endl;
-		break;
-	case SafetyResult::COULD_NOT_VERIFY:
-		std::cout << "Result: COULD NOT VERIFY" << std::endl;
-		break;
-	}
+	// Loaded once here rather than per-check; LinkSafetyChecker itself is
+	// still constructed fresh in checkSafetyNow(), same pattern as the
+	// Phase 5 test call.
+	apiKey = ApiKeyLoader::load("apikey.txt");
 }
 
 void ofApp::update() {
 	scanner.update();
+
+	if (scanner.hasDecoded()) {
+		std::string current = scanner.getLastDecoded();
+		if (current != lastSeenDecodedUrl) {
+			// A newly-decoded code invalidates any previous verdict - back
+			// to PENDING until the user explicitly checks this one.
+			lastSeenDecodedUrl = current;
+			bannerState = BannerState::PENDING;
+			showConfirmDialog = false;
+		}
+	}
 }
 
 void ofApp::draw() {
 	drawHeader();
 	drawPreview();
 	drawResultBanner();
+
+	if (showConfirmDialog) {
+		drawConfirmDialog();
+	}
 }
 
 void ofApp::drawHeader() {
@@ -64,7 +96,13 @@ void ofApp::drawPreview() {
 	ofSetColor(255);
 	scanner.draw(previewX, previewY, previewW, previewH);
 
-	ofSetColor(93, 202, 165);
+	// Scan-target corner brackets: teal by default, red once the last
+	// checked result came back UNSAFE (locked design, Section 12.2).
+	if (bannerState == BannerState::UNSAFE) {
+		ofSetColor(214, 69, 65);
+	} else {
+		ofSetColor(93, 202, 165);
+	}
 	ofSetLineWidth(3);
 	float bx = previewX + previewW * 0.28f;
 	float by = previewY + previewH * 0.26f;
@@ -91,24 +129,161 @@ void ofApp::drawResultBanner() {
 	float bannerY = previewY + previewH + 15;
 	float bannerH = 55;
 
-	if (!scanner.hasDecoded()) {
+	switch (bannerState) {
+	case BannerState::EMPTY: {
 		ofSetColor(240, 240, 235);
 		ofDrawRectRounded(previewX, bannerY, previewW, bannerH, 8);
 		ofSetColor(120);
 		ofDrawBitmapString("No code scanned yet", previewX + 15, bannerY + 25);
 		ofSetColor(160);
 		ofDrawBitmapString("Results will appear here", previewX + 15, bannerY + 42);
-	} else {
+		break;
+	}
+
+	case BannerState::PENDING: {
 		ofSetColor(235, 235, 225);
 		ofDrawRectRounded(previewX, bannerY, previewW, bannerH, 8);
 		ofSetColor(90);
 		ofDrawBitmapString("Scanned - safety check pending", previewX + 15, bannerY + 25);
+
+		// "Check safety" button, right-aligned inside the banner.
+		checkButtonBounds = ofRectangle(previewX + previewW - 130, bannerY + 12, 115, 30);
+
+		// The URL sits on the row below the button, but the button is
+		// wide enough to overlap that row too - so its available width
+		// has to stop before the button starts, not run the full banner
+		// width, or a long URL renders underneath it.
+		float urlGap = 10;
+		float urlMaxWidth = checkButtonBounds.x - (previewX + 15) - urlGap;
 		ofSetColor(120);
-		ofDrawBitmapString(scanner.getLastDecoded(), previewX + 15, bannerY + 42);
+		ofDrawBitmapString(truncateToFit(scanner.getLastDecoded(), urlMaxWidth), previewX + 15, bannerY + 42);
+
+		ofSetColor(29, 158, 117);
+		ofDrawRectRounded(checkButtonBounds, 6);
+		ofSetColor(255);
+		ofDrawBitmapString("Check safety", checkButtonBounds.x + 10, checkButtonBounds.y + 19);
+		break;
+	}
+
+	case BannerState::SAFE: {
+		ofSetColor(224, 245, 235);
+		ofDrawRectRounded(previewX, bannerY, previewW, bannerH, 8);
+		ofSetColor(29, 158, 117);
+		ofDrawBitmapString("Safe link", previewX + 15, bannerY + 22);
+
+		urlTextBounds = ofRectangle(previewX + 15, bannerY + 28, previewW - 30, 18);
+		std::string url = truncateToFit(scanner.getLastDecoded(), urlTextBounds.width);
+		ofSetColor(20, 110, 85);
+		ofDrawBitmapString(url, urlTextBounds.x, urlTextBounds.y + 12);
+		// Underline hint that this text is clickable (approximate width -
+		// OF's default bitmap font is ~8px/char).
+		ofDrawLine(urlTextBounds.x, urlTextBounds.y + 14,
+			urlTextBounds.x + url.size() * 8.0f, urlTextBounds.y + 14);
+		break;
+	}
+
+	case BannerState::UNSAFE: {
+		ofSetColor(250, 226, 224);
+		ofDrawRectRounded(previewX, bannerY, previewW, bannerH, 8);
+		ofSetColor(178, 40, 36);
+		ofDrawBitmapString("Unsafe link - do not open", previewX + 15, bannerY + 22);
+
+		urlTextBounds = ofRectangle(previewX + 15, bannerY + 28, previewW - 30, 18);
+		ofSetColor(178, 40, 36);
+		ofDrawBitmapString(truncateToFit(scanner.getLastDecoded(), urlTextBounds.width),
+			urlTextBounds.x, urlTextBounds.y + 12);
+		break;
+	}
+
+	case BannerState::COULD_NOT_VERIFY: {
+		ofSetColor(238, 236, 224);
+		ofDrawRectRounded(previewX, bannerY, previewW, bannerH, 8);
+		ofSetColor(140, 120, 40);
+		ofDrawBitmapString("Couldn't verify link safety", previewX + 15, bannerY + 22);
+		ofSetColor(120, 105, 60);
+		ofDrawBitmapString(truncateToFit(scanner.getLastDecoded(), previewW - 30), previewX + 15, bannerY + 42);
+		// Intentionally not clickable - see handleUrlClick().
+		break;
+	}
 	}
 }
 
+void ofApp::drawConfirmDialog() {
+	// Dim the whole window behind the dialog.
+	ofSetColor(0, 0, 0, 150);
+	ofDrawRectangle(0, 0, ofGetWidth(), ofGetHeight());
+
+	// Sized to leave a margin inside the 460px main window rather than
+	// matching it edge to edge.
+	float dialogW = 400, dialogH = 150;
+	float dialogX = (ofGetWidth() - dialogW) / 2;
+	float dialogY = (ofGetHeight() - dialogH) / 2;
+	float dialogTextW = dialogW - 40; // inner margin, 20px each side
+
+	ofSetColor(255);
+	ofDrawRectRounded(dialogX, dialogY, dialogW, dialogH, 10);
+
+	ofSetColor(30);
+	ofDrawBitmapString("Open this link anyway?", dialogX + 20, dialogY + 30);
+	ofSetColor(90);
+	ofDrawBitmapString(truncateToFit(scanner.getLastDecoded(), dialogTextW), dialogX + 20, dialogY + 55);
+	ofSetColor(178, 40, 36);
+	ofDrawBitmapString("Flagged as unsafe by Google Safe Browsing", dialogX + 20, dialogY + 75);
+
+	// Cancel = default/low-risk action, on the left. "Open anyway" = the
+	// deliberate override, visually distinct in red on the right.
+	confirmCancelBounds = ofRectangle(dialogX + 20, dialogY + dialogH - 45, 130, 30);
+	confirmOpenBounds = ofRectangle(dialogX + dialogW - 150, dialogY + dialogH - 45, 130, 30);
+
+	ofSetColor(230);
+	ofDrawRectRounded(confirmCancelBounds, 6);
+	ofSetColor(70);
+	ofDrawBitmapString("Cancel", confirmCancelBounds.x + 35, confirmCancelBounds.y + 19);
+
+	ofSetColor(178, 40, 36);
+	ofDrawRectRounded(confirmOpenBounds, 6);
+	ofSetColor(255);
+	ofDrawBitmapString("Open anyway", confirmOpenBounds.x + 12, confirmOpenBounds.y + 19);
+}
+
+void ofApp::checkSafetyNow() {
+	LinkSafetyChecker checker(apiKey);
+	SafetyResult result = checker.check(scanner.getLastDecoded());
+
+	switch (result) {
+	case SafetyResult::SAFE:
+		bannerState = BannerState::SAFE;
+		break;
+	case SafetyResult::UNSAFE:
+		bannerState = BannerState::UNSAFE;
+		break;
+	case SafetyResult::COULD_NOT_VERIFY:
+		bannerState = BannerState::COULD_NOT_VERIFY;
+		break;
+	}
+}
+
+void ofApp::handleUrlClick() {
+	if (bannerState == BannerState::SAFE) {
+		openInBrowser(scanner.getLastDecoded());
+	} else if (bannerState == BannerState::UNSAFE) {
+		showConfirmDialog = true;
+	}
+	// COULD_NOT_VERIFY has no click behaviour by design - we can't vouch
+	// for the link either way, so it stays inert rather than guessing.
+}
+
 void ofApp::mousePressed(int x, int y, int button) {
+	if (showConfirmDialog) {
+		if (confirmOpenBounds.inside(x, y)) {
+			openInBrowser(scanner.getLastDecoded());
+			showConfirmDialog = false;
+		} else if (confirmCancelBounds.inside(x, y)) {
+			showConfirmDialog = false;
+		}
+		return; // modal - ignore everything else in the app while open
+	}
+
 	for (const auto & btn : toggleButtons) {
 		if (btn.bounds.inside(x, y)) {
 			if (btn.isCameraButton) {
@@ -123,7 +298,19 @@ void ofApp::mousePressed(int x, int y, int button) {
 					}
 				}
 			}
+			return;
 		}
+	}
+
+	if (bannerState == BannerState::PENDING && checkButtonBounds.inside(x, y)) {
+		checkSafetyNow();
+		return;
+	}
+
+	if ((bannerState == BannerState::SAFE || bannerState == BannerState::UNSAFE)
+		&& urlTextBounds.inside(x, y)) {
+		handleUrlClick();
+		return;
 	}
 }
 
