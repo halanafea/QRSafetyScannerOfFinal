@@ -1,4 +1,12 @@
 #include "ofApp.h"
+#include <curl/curl.h>
+#include <iostream>
+
+size_t writeCallback(void * contents, size_t size, size_t nmemb, std::string * output) {
+	size_t totalSize = size * nmemb;
+	output->append(static_cast<char *>(contents), totalSize);
+	return totalSize;
+}
 
 void ofApp::setup() {
 	ofSetWindowTitle("QR Safety Scanner");
@@ -11,6 +19,28 @@ void ofApp::setup() {
 		{ "Camera", ofRectangle(300, 15, 70, 26), true },
 		{ "File", ofRectangle(375, 15, 60, 26), false },
 	};
+
+	// Temporary libcurl diagnostic test - DO NOT SHIP with SSL verification disabled
+	CURL * curl = curl_easy_init();
+	if (curl) {
+		std::string response;
+		curl_easy_setopt(curl, CURLOPT_URL, "https://example.com");
+		curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeCallback);
+		curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
+		curl_easy_setopt(curl, CURLOPT_SSL_OPTIONS, CURLSSLOPT_NO_REVOKE);
+
+		// DIAGNOSTIC ONLY - disables certificate verification to isolate the cause.
+		// Must be removed before this code is considered final.
+		curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
+
+		CURLcode res = curl_easy_perform(curl);
+		if (res == CURLE_OK) {
+			std::cout << "libcurl test succeeded. Response length: " << response.length() << " bytes" << std::endl;
+		} else {
+			std::cout << "libcurl test failed: " << curl_easy_strerror(res) << std::endl;
+		}
+		curl_easy_cleanup(curl);
+	}
 }
 
 void ofApp::update() {
@@ -41,15 +71,9 @@ void ofApp::drawPreview() {
 	ofSetColor(4, 52, 44);
 	ofDrawRectangle(previewX, previewY, previewW, previewH);
 
-	if (isCameraMode) {
-		ofSetColor(255);
-		scanner.draw(previewX, previewY, previewW, previewH);
-	} else if (scanner.hasDecoded() || true) {
-		ofSetColor(255);
-		scanner.draw(previewX, previewY, previewW, previewH);
-	}
+	ofSetColor(255);
+	scanner.draw(previewX, previewY, previewW, previewH);
 
-	// Scan-target corner brackets (teal - neutral/scanning color for now)
 	ofSetColor(93, 202, 165);
 	ofSetLineWidth(3);
 	float bx = previewX + previewW * 0.28f;
@@ -85,7 +109,6 @@ void ofApp::drawResultBanner() {
 		ofSetColor(160);
 		ofDrawBitmapString("Results will appear here", previewX + 15, bannerY + 42);
 	} else {
-		// Neutral "pending" state - real safe/unsafe verdict comes in Phase 5
 		ofSetColor(235, 235, 225);
 		ofDrawRectRounded(previewX, bannerY, previewW, bannerH, 8);
 		ofSetColor(90);
