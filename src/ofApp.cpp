@@ -1,12 +1,7 @@
 #include "ofApp.h"
-#include <curl/curl.h>
+#include "ApiKeyLoader.h"
+#include "LinkSafetyChecker.h"
 #include <iostream>
-
-size_t writeCallback(void * contents, size_t size, size_t nmemb, std::string * output) {
-	size_t totalSize = size * nmemb;
-	output->append(static_cast<char *>(contents), totalSize);
-	return totalSize;
-}
 
 void ofApp::setup() {
 	ofSetWindowTitle("QR Safety Scanner");
@@ -20,26 +15,21 @@ void ofApp::setup() {
 		{ "File", ofRectangle(375, 15, 60, 26), false },
 	};
 
-	// Temporary libcurl diagnostic test - DO NOT SHIP with SSL verification disabled
-	CURL * curl = curl_easy_init();
-	if (curl) {
-		std::string response;
-		curl_easy_setopt(curl, CURLOPT_URL, "https://example.com");
-		curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeCallback);
-		curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
-		curl_easy_setopt(curl, CURLOPT_SSL_OPTIONS, CURLSSLOPT_NO_REVOKE);
+	// Temporary test - remove once LinkSafetyChecker is confirmed working
+	std::string apiKey = ApiKeyLoader::load("apikey.txt");
+	LinkSafetyChecker checker(apiKey);
 
-		// DIAGNOSTIC ONLY - disables certificate verification to isolate the cause.
-		// Must be removed before this code is considered final.
-		curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
-
-		CURLcode res = curl_easy_perform(curl);
-		if (res == CURLE_OK) {
-			std::cout << "libcurl test succeeded. Response length: " << response.length() << " bytes" << std::endl;
-		} else {
-			std::cout << "libcurl test failed: " << curl_easy_strerror(res) << std::endl;
-		}
-		curl_easy_cleanup(curl);
+	SafetyResult result = checker.check("http://example.com");
+	switch (result) {
+	case SafetyResult::SAFE:
+		std::cout << "Result: SAFE" << std::endl;
+		break;
+	case SafetyResult::UNSAFE:
+		std::cout << "Result: UNSAFE" << std::endl;
+		break;
+	case SafetyResult::COULD_NOT_VERIFY:
+		std::cout << "Result: COULD NOT VERIFY" << std::endl;
+		break;
 	}
 }
 

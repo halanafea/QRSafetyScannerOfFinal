@@ -226,6 +226,8 @@
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="src\ApiKeyLoader.cpp" />
+    <ClCompile Include="src\LinkSafetyChecker.cpp" />
     <ClCompile Include="src\main.cpp" />
     <ClCompile Include="src\ofApp.cpp" />
     <ClCompile Include="src\QrDecoder.cpp" />
@@ -248,6 +250,9 @@
     <ClCompile Include="src\Scanner.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="src\ApiKeyLoader.h" />
+    <ClInclude Include="src\json.hpp" />
+    <ClInclude Include="src\LinkSafetyChecker.h" />
     <ClInclude Include="src\ofApp.h" />
     <ClInclude Include="src\QrDecoder.h" />
     <ClInclude Include="src\quirc\quirc.h" />

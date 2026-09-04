@@ -25,6 +25,12 @@
     <ClCompile Include="src\Scanner.cpp">
       <Filter>src</Filter>
     </ClCompile>
+    <ClCompile Include="src\LinkSafetyChecker.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\ApiKeyLoader.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <Filter Include="src">
@@ -45,6 +51,15 @@
       <Filter>src</Filter>
     </ClInclude>
     <ClInclude Include="src\Scanner.h">
+      <Filter>src</Filter>
+    </ClInclude>
+    <ClInclude Include="src\LinkSafetyChecker.h">
+      <Filter>src</Filter>
+    </ClInclude>
+    <ClInclude Include="src\ApiKeyLoader.h">
+      <Filter>src</Filter>
+    </ClInclude>
+    <ClInclude Include="src\json.hpp">
       <Filter>src</Filter>
     </ClInclude>
   </ItemGroup>
