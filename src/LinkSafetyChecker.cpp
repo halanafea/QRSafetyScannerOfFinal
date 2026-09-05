@@ -9,7 +9,7 @@
 // See documentation Section 13.2 / 13.3 and the Phase 9
 // pre-submission checklist.
 // ============================================================
-#define QR_SCANNER_DISABLE_SSL_VERIFY_FOR_LOCAL_DEV
+///#define QR_SCANNER_DISABLE_SSL_VERIFY_FOR_LOCAL_DEV
 
 using json = nlohmann::json;
 
@@ -23,6 +23,10 @@ size_t LinkSafetyChecker::writeCallback(void * contents, size_t size, size_t nme
 }
 
 SafetyResult LinkSafetyChecker::check(const std::string & url) {
+
+	// TEMPORARY DIAGNOSTIC - remove after checking the console output once.
+	ofLogNotice() << "curl version info: " << curl_version();
+
 	if (apiKey.empty()) {
 		ofLogWarning() << "No API key available - cannot check link safety";
 		return SafetyResult::COULD_NOT_VERIFY;
