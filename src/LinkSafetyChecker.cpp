@@ -2,6 +2,16 @@
 #include "json.hpp"
 #include <curl/curl.h>
 
+namespace {
+int curlDebugCallback(CURL * handle, curl_infotype type, char * data, size_t size, void * userptr) {
+	if (type == CURLINFO_TEXT) {
+		std::string msg(data, size);
+		ofLogNotice() << "[curl] " << msg;
+	}
+	return 0;
+}
+}
+
 // ============================================================
 // TEMPORARY - LOCAL DEV ONLY. Remove this line before final
 // submission/commit. Disables SSL verification to work around
@@ -9,7 +19,7 @@
 // See documentation Section 13.2 / 13.3 and the Phase 9
 // pre-submission checklist.
 // ============================================================
-///#define QR_SCANNER_DISABLE_SSL_VERIFY_FOR_LOCAL_DEV
+// #define QR_SCANNER_DISABLE_SSL_VERIFY_FOR_LOCAL_DEV
 
 using json = nlohmann::json;
 
@@ -23,8 +33,9 @@ size_t LinkSafetyChecker::writeCallback(void * contents, size_t size, size_t nme
 }
 
 SafetyResult LinkSafetyChecker::check(const std::string & url) {
-
 	// TEMPORARY DIAGNOSTIC - remove after checking the console output once.
+	// Confirms which TLS backend curl is actually using at runtime, rather
+	// than assuming based on the package's feature-definition file.
 	ofLogNotice() << "curl version info: " << curl_version();
 
 	if (apiKey.empty()) {
@@ -56,7 +67,23 @@ SafetyResult LinkSafetyChecker::check(const std::string & url) {
 	curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
 	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeCallback);
 	curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
-	curl_easy_setopt(curl, CURLOPT_SSL_OPTIONS, CURLSSLOPT_NO_REVOKE);
+	curl_easy_setopt(curl, CURLOPT_SSL_OPTIONS, CURLSSLOPT_NO_REVOKE | CURLSSLOPT_NATIVE_CA);
+	// openFrameworks bundles its own OpenSSL-linked curl (confirmed during
+	// Phase 9 investigation - see documentation Section 16). CURLSSLOPT_NATIVE_CA
+	// above is a no-op on some OpenSSL builds that lack Windows cert-store
+	// bridging support compiled in, so it isn't relied on alone: pointing
+	// CAINFO at a bundled CA file works on any OpenSSL build regardless of
+	// platform, so this is the fix actually being relied on.
+	std::string caBundlePath = ofToDataPath("cacert.pem", true);
+	// TEMPORARY DIAGNOSTIC - remove once confirmed.
+	ofLogNotice() << "CA bundle path: " << caBundlePath
+				  << " (exists: " << (ofFile(caBundlePath).exists() ? "yes" : "NO") << ")";
+	curl_easy_setopt(curl, CURLOPT_CAINFO, caBundlePath.c_str());
+	// TEMPORARY DIAGNOSTIC - remove once resolved. Gets curl's actual
+	// detailed handshake reasoning instead of just the generic top-level
+	// error string.
+	curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
+	curl_easy_setopt(curl, CURLOPT_DEBUGFUNCTION, curlDebugCallback);
 	// Without these, a hung/unreachable network leaves check() blocking
 	// indefinitely - and since it's called synchronously from a button
 	// click, that freezes the whole app with no way out but force-quitting.
